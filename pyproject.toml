@@ -1,0 +1,18 @@
+[project]
+name = "dnascanner"
+version = "0.1.0"
+description = "Scan your DNA against SNPedia and generate a report of notable findings"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "tqdm>=4.66",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project.scripts]
+download = "dnascanner.download:main"
+scan = "dnascanner.scan:main"
+report = "dnascanner.report:main"
