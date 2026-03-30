@@ -11,17 +11,13 @@ Usage:
 """
 
 import argparse
-import http.cookiejar
-import json
 import random
 import re
 import sqlite3
 import time
-import urllib.error
-import urllib.parse
-import urllib.request
 from datetime import datetime, timezone
 
+import requests
 from tqdm import tqdm
 
 API_URL = "https://bots.snpedia.com/api.php"
@@ -29,12 +25,9 @@ USER_AGENT = "dnascanner/1.0 (local mirror; contact: github.com/viberaven/dnasca
 MAX_RETRIES = 6
 MAX_BACKOFF = 30  # cap retry wait at 30s — 502s are transient, no point waiting longer
 
-# Shared opener with cookie jar — Incapsula CDN works better with persistent sessions
-_cookie_jar = http.cookiejar.CookieJar()
-_opener = urllib.request.build_opener(
-    urllib.request.HTTPCookieProcessor(_cookie_jar),
-)
-_opener.addheaders = [("User-Agent", USER_AGENT)]
+# Persistent session — reuses connections and cookies (Incapsula CDN likes this)
+session = requests.Session()
+session.headers["User-Agent"] = USER_AGENT
 
 
 # ---------------------------------------------------------------------------
@@ -110,16 +103,16 @@ def api_request(params: dict, retries: int = MAX_RETRIES) -> dict:
     """Make a GET request to the SNPedia MediaWiki API with retry logic.
 
     Uses capped exponential backoff with jitter and a persistent session
-    (cookie jar) to stay friendly with the Incapsula CDN.
+    to stay friendly with the Incapsula CDN.
     """
     params["format"] = "json"
-    url = f"{API_URL}?{urllib.parse.urlencode(params)}"
 
     for attempt in range(retries):
         try:
-            resp = _opener.open(url, timeout=30)
-            return json.loads(resp.read().decode("utf-8"))
-        except (urllib.error.HTTPError, urllib.error.URLError, json.JSONDecodeError) as e:
+            resp = session.get(API_URL, params=params, timeout=30)
+            resp.raise_for_status()
+            return resp.json()
+        except (requests.RequestException, ValueError) as e:
             # Capped backoff: 3s, 6s, 12s, 24s, 30s, 30s — plus jitter
             base_wait = min(3 * (2 ** attempt), MAX_BACKOFF)
             jitter = random.uniform(0.5, 1.5)

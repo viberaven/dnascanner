@@ -23,11 +23,6 @@ uv run download          uv run scan                  uv run report
 
 3. **`uv run report`** reads `results.db` and generates a self-contained interactive HTML report. Can be re-run anytime to regenerate the report without re-scanning.
 
-## Requirements
-
-- Python 3.10+
-- [uv](https://docs.astral.sh/uv/) (recommended) or pip
-
 ## Setup
 
 ```bash

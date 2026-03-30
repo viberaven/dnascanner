@@ -5,6 +5,7 @@ description = "Scan your DNA against SNPedia and generate a report of notable fi
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
+    "requests>=2.33",
     "tqdm>=4.66",
 ]
 
