@@ -12,7 +12,6 @@ Usage:
 
 import argparse
 import gzip
-import hashlib
 import os
 import re
 import sqlite3
@@ -86,6 +85,7 @@ def init_results_db(db_path: str) -> sqlite3.Connection:
 # ---------------------------------------------------------------------------
 # VCF extraction
 # ---------------------------------------------------------------------------
+
 
 def normalize_chrom(chrom: str) -> str:
     """Strip 'chr' prefix and uppercase for matching against SNPedia."""
@@ -234,7 +234,9 @@ def extract_vcf_variants(vcf_path: str, results_conn: sqlite3.Connection):
             rsids.extend(r.lower() for r in extract_rsids_from_info(info))
             rsid_str = ",".join(rsids) if rsids else None
 
-            batch.append((chrom_norm, pos, ref, alt_str, genotype, qual_f, filt, rsid_str))
+            batch.append(
+                (chrom_norm, pos, ref, alt_str, genotype, qual_f, filt, rsid_str)
+            )
             extracted += 1
 
             if len(batch) >= batch_size:
@@ -276,16 +278,24 @@ def extract_vcf_variants(vcf_path: str, results_conn: sqlite3.Connection):
 # SNPedia matching
 # ---------------------------------------------------------------------------
 
+
 def snpedia_fingerprint(snpedia_conn: sqlite3.Connection) -> str:
     """Fingerprint based on row counts and max revision IDs."""
     snp_count = snpedia_conn.execute("SELECT COUNT(*) FROM snps").fetchone()[0]
     geno_count = snpedia_conn.execute("SELECT COUNT(*) FROM genotypes").fetchone()[0]
-    snp_max_rev = snpedia_conn.execute("SELECT MAX(revision_id) FROM snps").fetchone()[0] or 0
-    geno_max_rev = snpedia_conn.execute("SELECT MAX(revision_id) FROM genotypes").fetchone()[0] or 0
+    snp_max_rev = (
+        snpedia_conn.execute("SELECT MAX(revision_id) FROM snps").fetchone()[0] or 0
+    )
+    geno_max_rev = (
+        snpedia_conn.execute("SELECT MAX(revision_id) FROM genotypes").fetchone()[0]
+        or 0
+    )
     return f"snps={snp_count}:{snp_max_rev},genos={geno_count}:{geno_max_rev}"
 
 
-def matching_needs_update(results_conn: sqlite3.Connection, snpedia_conn: sqlite3.Connection) -> bool:
+def matching_needs_update(
+    results_conn: sqlite3.Connection, snpedia_conn: sqlite3.Connection
+) -> bool:
     """Check if matches need recomputation (SNPedia data changed)."""
     row = results_conn.execute(
         "SELECT value FROM scan_meta WHERE key = 'snpedia_fingerprint'"
@@ -335,10 +345,14 @@ def match_variants(results_conn: sqlite3.Connection, snpedia_conn: sqlite3.Conne
             if flipped_key not in geno_lookup:
                 geno_lookup[flipped_key] = (mag or 0.0, repute, summary)
 
-    tqdm.write(f"    {len(pos_lookup):,} chr:pos, {len(rsid_lookup):,} rsIDs, {len(geno_lookup):,} genotypes")
+    tqdm.write(
+        f"    {len(pos_lookup):,} chr:pos, {len(rsid_lookup):,} rsIDs, {len(geno_lookup):,} genotypes"
+    )
 
     # Fetch all extracted variants
-    variant_count = results_conn.execute("SELECT COUNT(*) FROM vcf_variants").fetchone()[0]
+    variant_count = results_conn.execute(
+        "SELECT COUNT(*) FROM vcf_variants"
+    ).fetchone()[0]
 
     # Clear previous matches
     results_conn.execute("DELETE FROM matches")
@@ -386,12 +400,27 @@ def match_variants(results_conn: sqlite3.Connection, snpedia_conn: sqlite3.Conne
 
         geno_mag, geno_repute, geno_summary = geno if geno else (None, None, None)
 
-        batch.append((
-            chrom, pos, ref, alt, genotype, qual, filt,
-            rsid, gene, snp_summary,
-            genotype, geno_mag, geno_repute, geno_summary,
-            match_method, snp_rev, now,
-        ))
+        batch.append(
+            (
+                chrom,
+                pos,
+                ref,
+                alt,
+                genotype,
+                qual,
+                filt,
+                rsid,
+                gene,
+                snp_summary,
+                genotype,
+                geno_mag,
+                geno_repute,
+                geno_summary,
+                match_method,
+                snp_rev,
+                now,
+            )
+        )
 
         stats["matched"] += 1
         if match_method == "pos":
@@ -422,21 +451,24 @@ def match_variants(results_conn: sqlite3.Connection, snpedia_conn: sqlite3.Conne
 
     # Save fingerprint
     fp = snpedia_fingerprint(snpedia_conn)
-    results_conn.executemany("INSERT OR REPLACE INTO scan_meta (key, value) VALUES (?, ?)", [
-        ("snpedia_fingerprint", fp),
-        ("matched_at", now),
-        ("match_total", str(stats["matched"])),
-        ("match_by_pos", str(stats["by_pos"])),
-        ("match_by_rsid", str(stats["by_rsid"])),
-        ("match_with_geno", str(stats["with_geno"])),
-    ])
+    results_conn.executemany(
+        "INSERT OR REPLACE INTO scan_meta (key, value) VALUES (?, ?)",
+        [
+            ("snpedia_fingerprint", fp),
+            ("matched_at", now),
+            ("match_total", str(stats["matched"])),
+            ("match_by_pos", str(stats["by_pos"])),
+            ("match_by_rsid", str(stats["by_rsid"])),
+            ("match_with_geno", str(stats["with_geno"])),
+        ],
+    )
     results_conn.commit()
 
     notable = results_conn.execute(
         "SELECT COUNT(*) FROM matches WHERE geno_magnitude >= 2"
     ).fetchone()[0]
 
-    tqdm.write(f"\n  Results:")
+    tqdm.write("\n  Results:")
     tqdm.write(f"    Matched:            {stats['matched']:,} SNPs")
     tqdm.write(f"      by chr:pos:       {stats['by_pos']:,}")
     tqdm.write(f"      by rsID:          {stats['by_rsid']:,}")
@@ -448,15 +480,26 @@ def match_variants(results_conn: sqlite3.Connection, snpedia_conn: sqlite3.Conne
 # CLI
 # ---------------------------------------------------------------------------
 
+
 def main():
     parser = argparse.ArgumentParser(
         description="Scan a VCF against SNPedia and store results in a SQLite database.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="Example:\n  uv run scan --vcf my_dna.vcf.gz --snpedia data/snpedia.db --out results.db",
     )
-    parser.add_argument("--vcf", required=True, help="Path to VCF file (.vcf or .vcf.gz)")
-    parser.add_argument("--snpedia", default="data/snpedia.db", help="SNPedia SQLite database (default: data/snpedia.db)")
-    parser.add_argument("--out", default="results.db", help="Output results SQLite database (default: results.db)")
+    parser.add_argument(
+        "--vcf", required=True, help="Path to VCF file (.vcf or .vcf.gz)"
+    )
+    parser.add_argument(
+        "--snpedia",
+        default="data/snpedia.db",
+        help="SNPedia SQLite database (default: data/snpedia.db)",
+    )
+    parser.add_argument(
+        "--out",
+        default="results.db",
+        help="Output results SQLite database (default: results.db)",
+    )
     args = parser.parse_args()
 
     if not Path(args.vcf).exists():
@@ -486,16 +529,24 @@ def main():
         print("  Step 1: Extracting variants from VCF...")
         extract_vcf_variants(args.vcf, results_conn)
     else:
-        cached_count = results_conn.execute("SELECT COUNT(*) FROM vcf_variants").fetchone()[0]
-        print(f"  Step 1: VCF unchanged, using cached extraction ({cached_count:,} SNPs)")
+        cached_count = results_conn.execute(
+            "SELECT COUNT(*) FROM vcf_variants"
+        ).fetchone()[0]
+        print(
+            f"  Step 1: VCF unchanged, using cached extraction ({cached_count:,} SNPs)"
+        )
 
     # Step 2: Match against SNPedia (skip if SNPedia unchanged)
     if matching_needs_update(results_conn, snpedia_conn):
         print("\n  Step 2: Matching against SNPedia...")
         match_variants(results_conn, snpedia_conn)
     else:
-        cached_matches = results_conn.execute("SELECT COUNT(*) FROM matches").fetchone()[0]
-        print(f"  Step 2: SNPedia unchanged, using cached matches ({cached_matches:,} matches)")
+        cached_matches = results_conn.execute(
+            "SELECT COUNT(*) FROM matches"
+        ).fetchone()[0]
+        print(
+            f"  Step 2: SNPedia unchanged, using cached matches ({cached_matches:,} matches)"
+        )
 
     snpedia_conn.close()
 
@@ -512,15 +563,21 @@ def main():
     """).fetchall()
 
     if notable:
-        print(f"\n  Top findings (magnitude >= 2):")
-        print(f"  {'Mag':>5}  {'Repute':<6}  {'rsID':<12}  {'Gene':<8}  {'Geno':<7}  Summary")
-        print(f"  {'---':>5}  {'------':<6}  {'----':<12}  {'----':<8}  {'----':<7}  -------")
+        print("\n  Top findings (magnitude >= 2):")
+        print(
+            f"  {'Mag':>5}  {'Repute':<6}  {'rsID':<12}  {'Gene':<8}  {'Geno':<7}  Summary"
+        )
+        print(
+            f"  {'---':>5}  {'------':<6}  {'----':<12}  {'----':<8}  {'----':<7}  -------"
+        )
         for mag, repute, rsid, gene, geno, geno_sum, snp_sum in notable:
             mag_s = f"{mag:.1f}" if mag else "-"
             repute_s = (repute or "-")[:6]
             gene_s = (gene or "-")[:8]
             summary = (geno_sum or snp_sum or "-")[:50]
-            print(f"  {mag_s:>5}  {repute_s:<6}  {rsid:<12}  {gene_s:<8}  {geno:<7}  {summary}")
+            print(
+                f"  {mag_s:>5}  {repute_s:<6}  {rsid:<12}  {gene_s:<8}  {geno:<7}  {summary}"
+            )
 
     results_conn.close()
     print()

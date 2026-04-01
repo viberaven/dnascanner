@@ -99,6 +99,7 @@ def init_db(db_path: str) -> sqlite3.Connection:
 # MediaWiki API helpers
 # ---------------------------------------------------------------------------
 
+
 def api_request(params: dict, retries: int = MAX_RETRIES) -> dict:
     """Make a GET request to the SNPedia MediaWiki API with retry logic.
 
@@ -114,15 +115,19 @@ def api_request(params: dict, retries: int = MAX_RETRIES) -> dict:
             return resp.json()
         except (requests.RequestException, ValueError) as e:
             # Capped backoff: 3s, 6s, 12s, 24s, 30s, 30s — plus jitter
-            base_wait = min(3 * (2 ** attempt), MAX_BACKOFF)
+            base_wait = min(3 * (2**attempt), MAX_BACKOFF)
             jitter = random.uniform(0.5, 1.5)
             wait = base_wait * jitter
 
             if attempt < retries - 1:
-                tqdm.write(f"  [retry {attempt+1}/{retries}] {e} — waiting {wait:.0f}s")
+                tqdm.write(
+                    f"  [retry {attempt + 1}/{retries}] {e} — waiting {wait:.0f}s"
+                )
                 time.sleep(wait)
             else:
-                raise RuntimeError(f"API request failed after {retries} attempts: {e}") from e
+                raise RuntimeError(
+                    f"API request failed after {retries} attempts: {e}"
+                ) from e
 
 
 def fetch_category_members(category: str, delay: float) -> list[dict]:
@@ -136,8 +141,12 @@ def fetch_category_members(category: str, delay: float) -> list[dict]:
         "cmtype": "page",
     }
 
-    pbar = tqdm(desc=f"Listing {category}", unit=" pages", colour="#38bdf8",
-                bar_format="{l_bar}{bar}| {n_fmt} pages [{elapsed}, {rate_fmt}]")
+    pbar = tqdm(
+        desc=f"Listing {category}",
+        unit=" pages",
+        colour="#38bdf8",
+        bar_format="{l_bar}{bar}| {n_fmt} pages [{elapsed}, {rate_fmt}]",
+    )
 
     while True:
         data = api_request(params)
@@ -160,12 +169,14 @@ def fetch_page_revisions(titles: list[str]) -> dict:
 
     Returns {title: {"revid": int, "timestamp": str}} for each page found.
     """
-    data = api_request({
-        "action": "query",
-        "titles": "|".join(titles),
-        "prop": "revisions",
-        "rvprop": "ids|timestamp",
-    })
+    data = api_request(
+        {
+            "action": "query",
+            "titles": "|".join(titles),
+            "prop": "revisions",
+            "rvprop": "ids|timestamp",
+        }
+    )
     result = {}
     for page in data["query"]["pages"].values():
         if "revisions" in page:
@@ -182,13 +193,15 @@ def fetch_page_contents(titles: list[str]) -> dict:
 
     Returns {title: {"revid": int, "timestamp": str, "content": str}}.
     """
-    data = api_request({
-        "action": "query",
-        "titles": "|".join(titles),
-        "prop": "revisions",
-        "rvprop": "ids|timestamp|content",
-        "rvslots": "main",
-    })
+    data = api_request(
+        {
+            "action": "query",
+            "titles": "|".join(titles),
+            "prop": "revisions",
+            "rvprop": "ids|timestamp|content",
+            "rvslots": "main",
+        }
+    )
     result = {}
     for page in data["query"]["pages"].values():
         if "revisions" in page:
@@ -208,6 +221,7 @@ def fetch_page_contents(titles: list[str]) -> dict:
 # ---------------------------------------------------------------------------
 # Wiki template parser
 # ---------------------------------------------------------------------------
+
 
 def parse_template_params(wikitext: str, template_name: str) -> dict:
     """Extract key=value parameters from a named wiki template."""
@@ -295,7 +309,10 @@ def _float_or_none(val):
 # Incremental download logic
 # ---------------------------------------------------------------------------
 
-def get_stored_revisions(conn: sqlite3.Connection, table: str, titles: list[str]) -> dict:
+
+def get_stored_revisions(
+    conn: sqlite3.Connection, table: str, titles: list[str]
+) -> dict:
     """Get {title: revision_id} for pages already in the database."""
     if table == "snps":
         key_col = "rsid"
@@ -315,10 +332,13 @@ def get_stored_revisions(conn: sqlite3.Connection, table: str, titles: list[str]
         return {r[0]: r[1] for r in rows}
 
 
-def upsert_snp(conn: sqlite3.Connection, title: str, content: str, revid: int, rev_ts: str):
+def upsert_snp(
+    conn: sqlite3.Connection, title: str, content: str, revid: int, rev_ts: str
+):
     now = datetime.now(timezone.utc).isoformat()
     parsed = parse_snp(title, content)
-    conn.execute("""
+    conn.execute(
+        """
         INSERT INTO snps (rsid, gene, chromosome, position, orientation,
                           stabilized_orientation, gmaf, summary, raw_wikitext,
                           revision_id, revision_ts, imported_at)
@@ -331,18 +351,31 @@ def upsert_snp(conn: sqlite3.Connection, title: str, content: str, revid: int, r
             raw_wikitext=excluded.raw_wikitext,
             revision_id=excluded.revision_id, revision_ts=excluded.revision_ts,
             imported_at=excluded.imported_at
-    """, (
-        parsed["rsid"], parsed["gene"], parsed["chromosome"],
-        parsed["position"], parsed["orientation"],
-        parsed["stabilized_orientation"], parsed["gmaf"],
-        parsed["summary"], content, revid, rev_ts, now,
-    ))
+    """,
+        (
+            parsed["rsid"],
+            parsed["gene"],
+            parsed["chromosome"],
+            parsed["position"],
+            parsed["orientation"],
+            parsed["stabilized_orientation"],
+            parsed["gmaf"],
+            parsed["summary"],
+            content,
+            revid,
+            rev_ts,
+            now,
+        ),
+    )
 
 
-def upsert_genotype(conn: sqlite3.Connection, title: str, content: str, revid: int, rev_ts: str):
+def upsert_genotype(
+    conn: sqlite3.Connection, title: str, content: str, revid: int, rev_ts: str
+):
     now = datetime.now(timezone.utc).isoformat()
     parsed = parse_genotype(title, content)
-    conn.execute("""
+    conn.execute(
+        """
         INSERT INTO genosets (page_title, magnitude, repute, summary,
                               criteria, raw_wikitext, revision_id, revision_ts, imported_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -352,14 +385,28 @@ def upsert_genotype(conn: sqlite3.Connection, title: str, content: str, revid: i
             raw_wikitext=excluded.raw_wikitext,
             revision_id=excluded.revision_id, revision_ts=excluded.revision_ts,
             imported_at=excluded.imported_at
-    """, (title, parsed["magnitude"], parsed["repute"], parsed["summary"],
-          parsed.get("criteria"), content, revid, rev_ts, now))
+    """,
+        (
+            title,
+            parsed["magnitude"],
+            parsed["repute"],
+            parsed["summary"],
+            parsed.get("criteria"),
+            content,
+            revid,
+            rev_ts,
+            now,
+        ),
+    )
 
 
-def upsert_genotype_row(conn: sqlite3.Connection, title: str, content: str, revid: int, rev_ts: str):
+def upsert_genotype_row(
+    conn: sqlite3.Connection, title: str, content: str, revid: int, rev_ts: str
+):
     now = datetime.now(timezone.utc).isoformat()
     parsed = parse_genotype(title, content)
-    conn.execute("""
+    conn.execute(
+        """
         INSERT INTO genotypes (page_title, rsid, alleles, magnitude, repute,
                                summary, raw_wikitext, revision_id, revision_ts, imported_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -369,14 +416,29 @@ def upsert_genotype_row(conn: sqlite3.Connection, title: str, content: str, revi
             summary=excluded.summary, raw_wikitext=excluded.raw_wikitext,
             revision_id=excluded.revision_id, revision_ts=excluded.revision_ts,
             imported_at=excluded.imported_at
-    """, (title, parsed["rsid"], parsed["alleles"], parsed["magnitude"],
-          parsed["repute"], parsed["summary"], content, revid, rev_ts, now))
+    """,
+        (
+            title,
+            parsed["rsid"],
+            parsed["alleles"],
+            parsed["magnitude"],
+            parsed["repute"],
+            parsed["summary"],
+            content,
+            revid,
+            rev_ts,
+            now,
+        ),
+    )
 
 
-def upsert_genoset(conn: sqlite3.Connection, title: str, content: str, revid: int, rev_ts: str):
+def upsert_genoset(
+    conn: sqlite3.Connection, title: str, content: str, revid: int, rev_ts: str
+):
     now = datetime.now(timezone.utc).isoformat()
     parsed = parse_genoset(title, content)
-    conn.execute("""
+    conn.execute(
+        """
         INSERT INTO genosets (page_title, magnitude, repute, summary,
                               criteria, raw_wikitext, revision_id, revision_ts, imported_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -386,8 +448,19 @@ def upsert_genoset(conn: sqlite3.Connection, title: str, content: str, revid: in
             raw_wikitext=excluded.raw_wikitext,
             revision_id=excluded.revision_id, revision_ts=excluded.revision_ts,
             imported_at=excluded.imported_at
-    """, (title, parsed["magnitude"], parsed["repute"], parsed["summary"],
-          parsed.get("criteria"), content, revid, rev_ts, now))
+    """,
+        (
+            title,
+            parsed["magnitude"],
+            parsed["repute"],
+            parsed["summary"],
+            parsed.get("criteria"),
+            content,
+            revid,
+            rev_ts,
+            now,
+        ),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -410,11 +483,11 @@ def download_category(
     refresh: bool = False,
 ):
     """Download all pages in a category, skipping unchanged ones."""
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(f"Category: {category} -> table: {table}")
     if refresh:
-        print(f"  Mode: refresh (checking remote revisions)")
-    print(f"{'='*60}")
+        print("  Mode: refresh (checking remote revisions)")
+    print(f"{'=' * 60}")
 
     # Step 1: Get all page titles in this category
     members = fetch_category_members(category, delay)
@@ -526,14 +599,29 @@ def download_category(
 
             try:
                 if table == "snps":
-                    upsert_snp(conn, title, page_data["content"],
-                               page_data["revid"], page_data["timestamp"])
+                    upsert_snp(
+                        conn,
+                        title,
+                        page_data["content"],
+                        page_data["revid"],
+                        page_data["timestamp"],
+                    )
                 elif table == "genotypes":
-                    upsert_genotype_row(conn, title, page_data["content"],
-                                        page_data["revid"], page_data["timestamp"])
+                    upsert_genotype_row(
+                        conn,
+                        title,
+                        page_data["content"],
+                        page_data["revid"],
+                        page_data["timestamp"],
+                    )
                 elif table == "genosets":
-                    upsert_genoset(conn, title, page_data["content"],
-                                   page_data["revid"], page_data["timestamp"])
+                    upsert_genoset(
+                        conn,
+                        title,
+                        page_data["content"],
+                        page_data["revid"],
+                        page_data["timestamp"],
+                    )
 
                 if was_stored:
                     stats["updated"] += 1
@@ -555,8 +643,10 @@ def download_category(
     pbar.close()
     conn.commit()
 
-    tqdm.write(f"  Done: {stats['new']:,} new, {stats['updated']:,} updated, "
-               f"{stats['skipped']:,} skipped, {stats['errors']:,} errors")
+    tqdm.write(
+        f"  Done: {stats['new']:,} new, {stats['updated']:,} updated, "
+        f"{stats['skipped']:,} skipped, {stats['errors']:,} errors"
+    )
     return stats
 
 
@@ -604,7 +694,7 @@ def download_prebuilt(db_path: str) -> bool:
         conn.close()
 
         if count == 0:
-            print(f"  Pre-built database is empty, ignoring")
+            print("  Pre-built database is empty, ignoring")
             Path(tmp_path).unlink(missing_ok=True)
             return False
 
@@ -623,26 +713,54 @@ def download_prebuilt(db_path: str) -> bool:
 # CLI
 # ---------------------------------------------------------------------------
 
+
 def main():
-    parser = argparse.ArgumentParser(description="Download SNPedia into a local SQLite database.")
-    parser.add_argument("--db", default="data/snpedia.db", help="SQLite database path (default: data/snpedia.db)")
-    parser.add_argument("--delay", type=float, default=1.0, help="Delay between API requests in seconds (default: 1.0)")
-    parser.add_argument("--batch", type=int, default=50, help="Pages per API batch (default: 50, max 50)")
-    parser.add_argument("--category", choices=["snps", "genotypes", "genosets", "all"], default="all",
-                        help="Which category to download (default: all)")
-    parser.add_argument("--refresh", action="store_true",
-                        help="Check remote revisions and update existing pages if newer (slower, makes extra API calls)")
-    parser.add_argument("--no-prebuilt", action="store_true",
-                        help="Skip pre-built database download, mirror directly from SNPedia API")
+    parser = argparse.ArgumentParser(
+        description="Download SNPedia into a local SQLite database."
+    )
+    parser.add_argument(
+        "--db",
+        default="data/snpedia.db",
+        help="SQLite database path (default: data/snpedia.db)",
+    )
+    parser.add_argument(
+        "--delay",
+        type=float,
+        default=1.0,
+        help="Delay between API requests in seconds (default: 1.0)",
+    )
+    parser.add_argument(
+        "--batch",
+        type=int,
+        default=50,
+        help="Pages per API batch (default: 50, max 50)",
+    )
+    parser.add_argument(
+        "--category",
+        choices=["snps", "genotypes", "genosets", "all"],
+        default="all",
+        help="Which category to download (default: all)",
+    )
+    parser.add_argument(
+        "--refresh",
+        action="store_true",
+        help="Check remote revisions and update existing pages if newer (slower, makes extra API calls)",
+    )
+    parser.add_argument(
+        "--no-prebuilt",
+        action="store_true",
+        help="Skip pre-built database download, mirror directly from SNPedia API",
+    )
     args = parser.parse_args()
 
     batch_size = min(args.batch, 50)  # MediaWiki API limit for multi-title queries
 
     # Ensure parent directory exists
     from pathlib import Path
+
     Path(args.db).parent.mkdir(parents=True, exist_ok=True)
 
-    print(f"SNPedia Downloader")
+    print("SNPedia Downloader")
     print(f"  Database: {args.db}")
 
     # Try pre-built download first
@@ -679,12 +797,16 @@ def main():
     start_time = time.time()
     total_stats = {"new": 0, "updated": 0, "skipped": 0, "errors": 0}
 
-    categories_to_run = CATEGORIES if args.category == "all" else [
-        c for c in CATEGORIES if c[1] == args.category
-    ]
+    categories_to_run = (
+        CATEGORIES
+        if args.category == "all"
+        else [c for c in CATEGORIES if c[1] == args.category]
+    )
 
     for category, table in categories_to_run:
-        stats = download_category(conn, category, table, batch_size, args.delay, args.refresh)
+        stats = download_category(
+            conn, category, table, batch_size, args.delay, args.refresh
+        )
         for k in total_stats:
             total_stats[k] += stats[k]
 
@@ -697,10 +819,12 @@ def main():
     conn.commit()
 
     elapsed = time.time() - start_time
-    print(f"\n{'='*60}")
-    print(f"Completed in {elapsed/60:.1f} minutes")
-    print(f"  Total: {total_stats['new']:,} new, {total_stats['updated']:,} updated, "
-          f"{total_stats['skipped']:,} skipped, {total_stats['errors']:,} errors")
+    print(f"\n{'=' * 60}")
+    print(f"Completed in {elapsed / 60:.1f} minutes")
+    print(
+        f"  Total: {total_stats['new']:,} new, {total_stats['updated']:,} updated, "
+        f"{total_stats['skipped']:,} skipped, {total_stats['errors']:,} errors"
+    )
 
     # Print DB stats
     for table in ["snps", "genotypes", "genosets"]:

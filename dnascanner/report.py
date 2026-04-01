@@ -25,6 +25,7 @@ from tqdm import tqdm
 # Shared data loading
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class ReportData:
     vcf_name: str
@@ -46,10 +47,18 @@ def load_report_data(db_path: str) -> ReportData:
     conn = sqlite3.connect(db_path)
 
     total_matches = conn.execute("SELECT COUNT(*) FROM matches").fetchone()[0]
-    with_genotype = conn.execute("SELECT COUNT(*) FROM matches WHERE geno_magnitude IS NOT NULL").fetchone()[0]
-    notable = conn.execute("SELECT COUNT(*) FROM matches WHERE geno_magnitude >= 2").fetchone()[0]
-    bad = conn.execute("SELECT COUNT(*) FROM matches WHERE LOWER(geno_repute) = 'bad'").fetchone()[0]
-    good = conn.execute("SELECT COUNT(*) FROM matches WHERE LOWER(geno_repute) = 'good'").fetchone()[0]
+    with_genotype = conn.execute(
+        "SELECT COUNT(*) FROM matches WHERE geno_magnitude IS NOT NULL"
+    ).fetchone()[0]
+    notable = conn.execute(
+        "SELECT COUNT(*) FROM matches WHERE geno_magnitude >= 2"
+    ).fetchone()[0]
+    bad = conn.execute(
+        "SELECT COUNT(*) FROM matches WHERE LOWER(geno_repute) = 'bad'"
+    ).fetchone()[0]
+    good = conn.execute(
+        "SELECT COUNT(*) FROM matches WHERE LOWER(geno_repute) = 'good'"
+    ).fetchone()[0]
 
     vcf_path = get_meta(conn, "vcf_path", "unknown")
     total_variants = get_meta(conn, "vcf_total_variants", "?")
@@ -65,7 +74,9 @@ def load_report_data(db_path: str) -> ReportData:
 
     return ReportData(
         vcf_name=Path(vcf_path).name,
-        total_variants=f"{int(total_variants):,}" if total_variants.isdigit() else total_variants,
+        total_variants=f"{int(total_variants):,}"
+        if total_variants.isdigit()
+        else total_variants,
         total_matches=total_matches,
         with_genotype=with_genotype,
         notable=notable,
@@ -79,11 +90,14 @@ def load_report_data(db_path: str) -> ReportData:
 # Markdown report
 # ---------------------------------------------------------------------------
 
+
 def generate_markdown(data: ReportData, out_path: str):
     lines = []
     lines.append("# DNAscanner Report")
     lines.append("")
-    lines.append(f"Generated {datetime.now().strftime('%Y-%m-%d %H:%M')} | VCF: {data.vcf_name} | {data.total_variants} variants scanned")
+    lines.append(
+        f"Generated {datetime.now().strftime('%Y-%m-%d %H:%M')} | VCF: {data.vcf_name} | {data.total_variants} variants scanned"
+    )
     lines.append("")
     lines.append("## Summary")
     lines.append("")
@@ -115,7 +129,12 @@ def generate_markdown(data: ReportData, out_path: str):
         lines.append("")
         lines.append("| Mag | Repute | rsID | Gene | Genotype | Summary |")
         lines.append("|----:|--------|------|------|----------|---------|")
-        for row in tqdm(notable_rows, desc="Building markdown (notable)", unit=" rows", colour="#4ade80"):
+        for row in tqdm(
+            notable_rows,
+            desc="Building markdown (notable)",
+            unit=" rows",
+            colour="#4ade80",
+        ):
             lines.append(md_table_row(row))
         lines.append("")
 
@@ -124,25 +143,35 @@ def generate_markdown(data: ReportData, out_path: str):
         lines.append("")
         lines.append("| Mag | Repute | rsID | Gene | Genotype | Summary |")
         lines.append("|----:|--------|------|------|----------|---------|")
-        for row in tqdm(mild_rows, desc="Building markdown (mild)", unit=" rows", colour="#4ade80"):
+        for row in tqdm(
+            mild_rows, desc="Building markdown (mild)", unit=" rows", colour="#4ade80"
+        ):
             lines.append(md_table_row(row))
         lines.append("")
 
     if other_rows:
         lines.append("## Other matches")
         lines.append("")
-        lines.append("| Mag | Repute | rsID | Gene | Genotype | Chr | Position | Summary |")
-        lines.append("|----:|--------|------|------|----------|-----|----------|---------|")
-        for row in tqdm(other_rows, desc="Building markdown (other)", unit=" rows", colour="#4ade80"):
+        lines.append(
+            "| Mag | Repute | rsID | Gene | Genotype | Chr | Position | Summary |"
+        )
+        lines.append(
+            "|----:|--------|------|------|----------|-----|----------|---------|"
+        )
+        for row in tqdm(
+            other_rows, desc="Building markdown (other)", unit=" rows", colour="#4ade80"
+        ):
             lines.append(md_table_row(row, include_location=True))
 
     lines.append("")
     lines.append("---")
     lines.append("")
-    lines.append("**Disclaimer:** This report is for informational and educational purposes only. "
-                 "It is NOT medical advice. SNPedia data is community-curated and may contain errors. "
-                 "Genetic variants interact in complex ways — a single SNP rarely determines an outcome. "
-                 "Always consult a qualified healthcare professional or genetic counselor for medical decisions.")
+    lines.append(
+        "**Disclaimer:** This report is for informational and educational purposes only. "
+        "It is NOT medical advice. SNPedia data is community-curated and may contain errors. "
+        "Genetic variants interact in complex ways — a single SNP rarely determines an outcome. "
+        "Always consult a qualified healthcare professional or genetic counselor for medical decisions."
+    )
     lines.append("")
 
     with open(out_path, "w") as f:
@@ -502,16 +531,16 @@ def generate_html(data: ReportData, out_path: str):
         row_html = (
             f'      <tr data-repute="{esc(repute_lower)}" data-mag="{mag or 0}">'
             f'<td class="mag {mag_class(mag)}" data-sort="{mag if mag is not None else -1}">'
-            f'{esc(mag_str) or "<span class=no-data>-</span>"}</td>'
+            f"{esc(mag_str) or '<span class=no-data>-</span>'}</td>"
             f'<td class="{repute_class(repute)}">'
-            f'{esc(repute_lower) or "<span class=no-data>-</span>"}</td>'
+            f"{esc(repute_lower) or '<span class=no-data>-</span>'}</td>"
             f'<td class="rsid"><a href="{snpedia_url}" target="_blank">{esc(rsid)}</a></td>'
             f'<td class="gene">{esc(gene) or "<span class=no-data>-</span>"}</td>'
             f'<td class="genotype">{esc(geno)}</td>'
-            f'<td>{esc(summary) or "<span class=no-data>-</span>"}</td>'
-            f'<td>{esc(chrom)}</td>'
+            f"<td>{esc(summary) or '<span class=no-data>-</span>'}</td>"
+            f"<td>{esc(chrom)}</td>"
             f'<td data-sort="{pos}">{pos:,}</td>'
-            f'</tr>'
+            f"</tr>"
         )
         rows_html.append(row_html)
 
@@ -538,19 +567,32 @@ def generate_html(data: ReportData, out_path: str):
 # CLI
 # ---------------------------------------------------------------------------
 
+
 def main():
     parser = argparse.ArgumentParser(
         description="Generate a report from SNP scan results.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="Examples:\n"
-               "  uv run report --db results.db\n"
-               "  uv run report --db results.db --format md --out report.md\n"
-               "  uv run report --db results.db --format all --out report",
+        "  uv run report --db results.db\n"
+        "  uv run report --db results.db --format md --out report.md\n"
+        "  uv run report --db results.db --format all --out report",
     )
-    parser.add_argument("--db", default="results.db", help="Scan results SQLite database (default: results.db)")
-    parser.add_argument("--out", default="report", help="Output path (default: report). Extension added automatically unless --format is html/md")
-    parser.add_argument("--format", choices=["html", "md", "all"], default="html",
-                        help="Output format: html, md, or all (default: html)")
+    parser.add_argument(
+        "--db",
+        default="results.db",
+        help="Scan results SQLite database (default: results.db)",
+    )
+    parser.add_argument(
+        "--out",
+        default="report",
+        help="Output path (default: report). Extension added automatically unless --format is html/md",
+    )
+    parser.add_argument(
+        "--format",
+        choices=["html", "md", "all"],
+        default="html",
+        help="Output format: html, md, or all (default: html)",
+    )
     args = parser.parse_args()
 
     if not Path(args.db).exists():
@@ -577,7 +619,9 @@ def main():
         generate_html(data, f"{base}.html")
         generate_markdown(data, f"{base}.md")
 
-    print(f"\n  {data.total_matches:,} matches | {data.notable:,} notable | {data.bad:,} bad | {data.good:,} good")
+    print(
+        f"\n  {data.total_matches:,} matches | {data.notable:,} notable | {data.bad:,} bad | {data.good:,} good"
+    )
     print()
 
 
