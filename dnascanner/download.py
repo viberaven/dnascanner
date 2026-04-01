@@ -561,6 +561,65 @@ def download_category(
 
 
 # ---------------------------------------------------------------------------
+# Pre-built database download
+# ---------------------------------------------------------------------------
+
+PREBUILT_URL = "https://data.viberaven.com/dnascanner/snpedia.db"
+
+
+def download_prebuilt(db_path: str) -> bool:
+    """Try to download a pre-built SNPedia database. Returns True on success."""
+    import shutil
+    from pathlib import Path
+
+    print(f"  Fetching pre-built database from {PREBUILT_URL}...")
+
+    try:
+        resp = session.get(PREBUILT_URL, stream=True, timeout=30)
+        resp.raise_for_status()
+    except requests.RequestException as e:
+        print(f"  Pre-built download failed: {e}")
+        return False
+
+    total = int(resp.headers.get("content-length", 0))
+    tmp_path = db_path + ".download"
+
+    try:
+        with open(tmp_path, "wb") as f:
+            with tqdm(
+                total=total or None,
+                unit="B",
+                unit_scale=True,
+                unit_divisor=1024,
+                desc="Downloading",
+                colour="#38bdf8",
+            ) as pbar:
+                for chunk in resp.iter_content(chunk_size=256 * 1024):
+                    f.write(chunk)
+                    pbar.update(len(chunk))
+
+        # Verify it's a valid SQLite database
+        conn = sqlite3.connect(tmp_path)
+        count = conn.execute("SELECT COUNT(*) FROM snps").fetchone()[0]
+        conn.close()
+
+        if count == 0:
+            print(f"  Pre-built database is empty, ignoring")
+            Path(tmp_path).unlink(missing_ok=True)
+            return False
+
+        # Replace the target file
+        shutil.move(tmp_path, db_path)
+        print(f"  Downloaded pre-built database ({count:,} SNPs)")
+        return True
+
+    except Exception as e:
+        print(f"  Pre-built download failed: {e}")
+        Path(tmp_path).unlink(missing_ok=True)
+        return False
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
@@ -573,19 +632,47 @@ def main():
                         help="Which category to download (default: all)")
     parser.add_argument("--refresh", action="store_true",
                         help="Check remote revisions and update existing pages if newer (slower, makes extra API calls)")
+    parser.add_argument("--no-prebuilt", action="store_true",
+                        help="Skip pre-built database download, mirror directly from SNPedia API")
     args = parser.parse_args()
 
     batch_size = min(args.batch, 50)  # MediaWiki API limit for multi-title queries
 
-    print(f"SNPedia Downloader")
-    print(f"  Database: {args.db}")
-    print(f"  Delay: {args.delay}s between requests")
-    print(f"  Batch size: {batch_size}")
-    print(f"  API: {API_URL}")
-
     # Ensure parent directory exists
     from pathlib import Path
     Path(args.db).parent.mkdir(parents=True, exist_ok=True)
+
+    print(f"SNPedia Downloader")
+    print(f"  Database: {args.db}")
+
+    # Try pre-built download first
+    db_exists = Path(args.db).exists()
+    need_mirror = True
+
+    if not args.no_prebuilt:
+        if not db_exists:
+            # No local DB — try pre-built first
+            if download_prebuilt(args.db):
+                need_mirror = False
+        elif args.refresh:
+            # Refresh mode — fetch latest pre-built, then refresh from API
+            download_prebuilt(args.db)
+            # Still need to mirror for refresh
+            need_mirror = True
+
+    if not need_mirror and not args.refresh:
+        # Pre-built download succeeded, no refresh needed
+        conn = sqlite3.connect(args.db)
+        for table in ["snps", "genotypes", "genosets"]:
+            count = conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+            print(f"  {table}: {count:,} rows")
+        conn.close()
+        return
+
+    # Mirror from SNPedia API
+    print(f"  Delay: {args.delay}s between requests")
+    print(f"  Batch size: {batch_size}")
+    print(f"  API: {API_URL}")
 
     conn = init_db(args.db)
 

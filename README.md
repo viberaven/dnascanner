@@ -35,22 +35,24 @@ uv sync
 ### Step 1: Download SNPedia
 
 ```bash
-# Download everything (~112K SNPs, ~105K genotypes, ~283 genosets)
-# Takes 3-5 hours due to API rate limiting
+# Download pre-built database (fast, seconds)
+# Falls back to SNPedia API mirroring if pre-built is unavailable
 uv run download
 
-# Or download just one category
-uv run download --category snps
+# Refresh: fetch latest pre-built, then check SNPedia API for updates
+uv run download --refresh
+
+# Skip pre-built, mirror directly from SNPedia API (~3-5 hours)
+uv run download --no-prebuilt
+
+# Download just one category from the API
+uv run download --no-prebuilt --category snps
 
 # Adjust delay if hitting too many 502s
-uv run download --delay 3
-
-# Resume an interrupted download — skips pages already in DB
-uv run download
-
-# Check for updated pages on SNPedia and re-download them
-uv run download --refresh
+uv run download --no-prebuilt --delay 3
 ```
+
+On first run, `uv run download` tries to fetch a pre-built database from `data.viberaven.com`. This takes seconds instead of hours. If the pre-built is unavailable, it falls back to mirroring from the SNPedia API page by page.
 
 | Flag | Default | Description |
 |------|---------|-------------|
@@ -58,7 +60,8 @@ uv run download --refresh
 | `--delay` | `1.0` | Seconds between API requests |
 | `--batch` | `50` | Pages per API batch (max 50) |
 | `--category` | `all` | `snps`, `genotypes`, `genosets`, or `all` |
-| `--refresh` | off | Check remote revisions and update stale pages |
+| `--refresh` | off | Fetch latest pre-built, then check API for updates |
+| `--no-prebuilt` | off | Skip pre-built download, mirror from API only |
 
 ### Step 2: Scan your VCF
 
@@ -102,14 +105,14 @@ Can be re-run anytime — useful after updating SNPedia data and re-scanning.
 
 ```bash
 # First time: full pipeline
-uv run download
+uv run download                                      # fetches pre-built DB (seconds)
 uv run scan --vcf /mnt/dna/my_genome.vcf.gz
 uv run report
 
 # Later: update SNPedia and regenerate
-uv run download                                     # only fetches changes
-uv run scan --vcf /mnt/dna/my_genome.vcf.gz         # only re-matches
-uv run report                                        # regenerate HTML
+uv run download --refresh                            # fetch latest + check for updates
+uv run scan --vcf /mnt/dna/my_genome.vcf.gz          # only re-matches if data changed
+uv run report                                        # regenerate report
 ```
 
 ## Supported VCF formats
