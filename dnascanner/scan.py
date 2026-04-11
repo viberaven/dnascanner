@@ -12,6 +12,7 @@ Usage:
 
 import argparse
 import gzip
+import json
 import os
 import re
 import sqlite3
@@ -21,6 +22,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from tqdm import tqdm
+
+from dnascanner.ancestry import (
+    AIMS,
+    POP_LABELS,
+    POPULATIONS,
+    estimate_ancestry,
+    lookup_aims_in_db,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -70,6 +79,25 @@ CREATE INDEX IF NOT EXISTS idx_matches_rsid ON matches(rsid);
 CREATE INDEX IF NOT EXISTS idx_matches_magnitude ON matches(geno_magnitude);
 CREATE INDEX IF NOT EXISTS idx_matches_gene ON matches(gene);
 CREATE INDEX IF NOT EXISTS idx_variants_pos ON vcf_variants(chromosome, position);
+
+CREATE TABLE IF NOT EXISTS ancestry (
+    population      TEXT PRIMARY KEY,
+    proportion      REAL NOT NULL,
+    label           TEXT
+);
+
+CREATE TABLE IF NOT EXISTS ancestry_markers (
+    rsid            TEXT PRIMARY KEY,
+    chromosome      TEXT,
+    position        INTEGER,
+    genotype        TEXT,
+    alt_count       INTEGER,
+    eur_freq        REAL,
+    afr_freq        REAL,
+    eas_freq        REAL,
+    sas_freq        REAL,
+    amr_freq        REAL
+);
 """
 
 
@@ -477,6 +505,88 @@ def match_variants(results_conn: sqlite3.Connection, snpedia_conn: sqlite3.Conne
 
 
 # ---------------------------------------------------------------------------
+# Ancestry estimation
+# ---------------------------------------------------------------------------
+
+
+def ancestry_needs_update(results_conn: sqlite3.Connection, vcf_path: str) -> bool:
+    """Check if ancestry estimation needs to run (VCF changed or never run)."""
+    row = results_conn.execute(
+        "SELECT value FROM scan_meta WHERE key = 'ancestry_vcf_fingerprint'"
+    ).fetchone()
+    if row is None:
+        return True
+    return row[0] != file_fingerprint(vcf_path)
+
+
+def estimate_and_store_ancestry(vcf_path: str, results_conn: sqlite3.Connection):
+    """Look up AIMs in extracted variants, estimate ancestry, store in results DB."""
+    markers = lookup_aims_in_db(results_conn)
+    in_vcf = sum(1 for m in markers if m.get("in_vcf"))
+    tqdm.write(
+        f"    {len(markers)} AIMs checked ({in_vcf} variant, {len(markers) - in_vcf} hom-ref)"
+    )
+
+    if len(markers) < 10:
+        tqdm.write(
+            "    Warning: Too few AIMs found (<10) — ancestry estimate may be unreliable"
+        )
+
+    proportions = estimate_ancestry(markers)
+
+    # Store proportions
+    results_conn.execute("DELETE FROM ancestry")
+    results_conn.execute("DELETE FROM ancestry_markers")
+    for pop, prop in proportions.items():
+        results_conn.execute(
+            "INSERT INTO ancestry VALUES (?, ?, ?)",
+            (pop, prop, POP_LABELS.get(pop, pop)),
+        )
+
+    # Store marker details
+    for m in markers:
+        results_conn.execute(
+            "INSERT INTO ancestry_markers VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                m["rsid"],
+                m["chrom"],
+                m["pos"],
+                m["genotype"],
+                m["alt_count"],
+                m["freqs"]["EUR"],
+                m["freqs"]["AFR"],
+                m["freqs"]["EAS"],
+                m["freqs"]["SAS"],
+                m["freqs"]["AMR"],
+            ),
+        )
+
+    # Store metadata
+    now = datetime.now(timezone.utc).isoformat()
+    meta = [
+        ("ancestry_vcf_fingerprint", file_fingerprint(vcf_path)),
+        ("ancestry_markers_found", str(len(markers))),
+        ("ancestry_markers_total", str(len(AIMS))),
+        ("ancestry_estimated_at", now),
+        ("ancestry_proportions_json", json.dumps(proportions)),
+    ]
+    results_conn.executemany(
+        "INSERT OR REPLACE INTO scan_meta (key, value) VALUES (?, ?)", meta
+    )
+    results_conn.commit()
+
+    # Display results
+    tqdm.write("\n  Continental Ancestry Estimate:")
+    sorted_pops = sorted(proportions.items(), key=lambda x: x[1], reverse=True)
+    for pop, prop in sorted_pops:
+        label = POP_LABELS.get(pop, pop)
+        bar = "\u2588" * int(prop * 40)
+        tqdm.write(f"    {label:<15} {prop * 100:>6.1f}%  {bar}")
+
+    tqdm.write(f"\n    Based on {len(markers)} ancestry-informative markers")
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
@@ -549,6 +659,26 @@ def main():
         )
 
     snpedia_conn.close()
+
+    # Step 3: Ancestry estimation (skip if VCF unchanged)
+    if ancestry_needs_update(results_conn, args.vcf):
+        print("\n  Step 3: Estimating continental ancestry...")
+        estimate_and_store_ancestry(args.vcf, results_conn)
+    else:
+        cached_json = results_conn.execute(
+            "SELECT value FROM scan_meta WHERE key = 'ancestry_proportions_json'"
+        ).fetchone()
+        if cached_json:
+            props = json.loads(cached_json[0])
+            top = max(props.items(), key=lambda x: x[1])
+            markers_n = results_conn.execute(
+                "SELECT value FROM scan_meta WHERE key = 'ancestry_markers_found'"
+            ).fetchone()[0]
+            print(
+                f"  Step 3: VCF unchanged, using cached ancestry "
+                f"(top: {POP_LABELS.get(top[0], top[0])} {top[1] * 100:.0f}%, "
+                f"{markers_n} AIMs)"
+            )
 
     elapsed = time.time() - t0
     print(f"\n  Completed in {elapsed:.1f}s")

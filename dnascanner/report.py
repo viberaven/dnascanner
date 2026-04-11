@@ -14,7 +14,7 @@ import html
 import os
 import sqlite3
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
@@ -27,6 +27,14 @@ from tqdm import tqdm
 
 
 @dataclass
+class AncestryData:
+    proportions: dict[str, float]  # pop_code -> proportion
+    labels: dict[str, str]  # pop_code -> human label
+    markers_found: int
+    markers_total: int
+
+
+@dataclass
 class ReportData:
     vcf_name: str
     total_variants: str
@@ -36,6 +44,7 @@ class ReportData:
     bad: int
     good: int
     rows: list[tuple]  # (chrom, pos, rsid, gene, geno, mag, repute, geno_sum, snp_sum)
+    ancestry: AncestryData | None = None
 
 
 def get_meta(conn: sqlite3.Connection, key: str, default: str = "") -> str:
@@ -70,6 +79,26 @@ def load_report_data(db_path: str) -> ReportData:
         ORDER BY COALESCE(geno_magnitude, -1) DESC
     """).fetchall()
 
+    # Load ancestry data if available
+    ancestry = None
+    try:
+        ancestry_rows = conn.execute(
+            "SELECT population, proportion, label FROM ancestry"
+        ).fetchall()
+        if ancestry_rows:
+            proportions = {row[0]: row[1] for row in ancestry_rows}
+            labels = {row[0]: row[2] for row in ancestry_rows}
+            markers_found = int(get_meta(conn, "ancestry_markers_found", "0"))
+            markers_total = int(get_meta(conn, "ancestry_markers_total", "0"))
+            ancestry = AncestryData(
+                proportions=proportions,
+                labels=labels,
+                markers_found=markers_found,
+                markers_total=markers_total,
+            )
+    except sqlite3.OperationalError:
+        pass  # ancestry table doesn't exist yet
+
     conn.close()
 
     return ReportData(
@@ -83,6 +112,7 @@ def load_report_data(db_path: str) -> ReportData:
         bad=bad,
         good=good,
         rows=rows,
+        ancestry=ancestry,
     )
 
 
@@ -107,6 +137,24 @@ def generate_markdown(data: ReportData, out_path: str):
     lines.append(f"- **Bad repute:** {data.bad:,}")
     lines.append(f"- **Good repute:** {data.good:,}")
     lines.append("")
+
+    if data.ancestry:
+        lines.append("## Continental Ancestry Estimate")
+        lines.append("")
+        lines.append("| Population | Proportion |")
+        lines.append("|------------|------------|")
+        sorted_pops = sorted(
+            data.ancestry.proportions.items(), key=lambda x: x[1], reverse=True
+        )
+        for pop, prop in sorted_pops:
+            label = data.ancestry.labels.get(pop, pop)
+            lines.append(f"| {label} | {prop * 100:.1f}% |")
+        lines.append("")
+        lines.append(
+            f"*Based on {data.ancestry.markers_found}/{data.ancestry.markers_total} "
+            f"ancestry-informative markers (1000 Genomes reference frequencies)*"
+        )
+        lines.append("")
 
     notable_rows = [r for r in data.rows if (r[5] or 0) >= 2]
     mild_rows = [r for r in data.rows if 1 <= (r[5] or 0) < 2]
@@ -357,6 +405,45 @@ REPORT_TEMPLATE = """\
     font-size: 0.8rem;
   }}
   .disclaimer strong {{ color: var(--bad); }}
+  .ancestry-section {{
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1.5rem;
+    margin-bottom: 2rem;
+  }}
+  .ancestry-section h2 {{
+    font-size: 1.1rem;
+    color: var(--accent);
+    margin-bottom: 1rem;
+  }}
+  .ancestry-bar-container {{
+    margin-bottom: 0.5rem;
+  }}
+  .ancestry-bar-label {{
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.85rem;
+    margin-bottom: 0.25rem;
+  }}
+  .ancestry-bar-label .pop-name {{ color: var(--text); }}
+  .ancestry-bar-label .pop-pct {{ color: var(--text-muted); font-weight: 600; }}
+  .ancestry-bar {{
+    height: 22px;
+    background: rgba(148, 163, 184, 0.1);
+    border-radius: 4px;
+    overflow: hidden;
+  }}
+  .ancestry-bar-fill {{
+    height: 100%;
+    border-radius: 4px;
+    transition: width 0.3s;
+  }}
+  .ancestry-meta {{
+    color: var(--text-muted);
+    font-size: 0.75rem;
+    margin-top: 0.75rem;
+  }}
 </style>
 </head>
 <body>
@@ -388,6 +475,8 @@ REPORT_TEMPLATE = """\
       <div class="label">Good repute</div>
     </div>
   </div>
+
+{ancestry_section}
 
   <div class="filter-row">
     <span class="filter-label">Repute</span>
@@ -518,6 +607,47 @@ def repute_class(repute: str | None) -> str:
     return ""
 
 
+POP_COLOURS = {
+    "EUR": "#38bdf8",
+    "AFR": "#f87171",
+    "EAS": "#fbbf24",
+    "SAS": "#4ade80",
+    "AMR": "#c084fc",
+}
+
+
+def build_ancestry_html(ancestry: AncestryData | None) -> str:
+    if ancestry is None:
+        return ""
+
+    bars = []
+    sorted_pops = sorted(ancestry.proportions.items(), key=lambda x: x[1], reverse=True)
+    for pop, prop in sorted_pops:
+        label = esc(ancestry.labels.get(pop, pop))
+        pct = prop * 100
+        colour = POP_COLOURS.get(pop, "#94a3b8")
+        bars.append(
+            f'    <div class="ancestry-bar-container">'
+            f'<div class="ancestry-bar-label">'
+            f'<span class="pop-name">{label}</span>'
+            f'<span class="pop-pct">{pct:.1f}%</span></div>'
+            f'<div class="ancestry-bar">'
+            f'<div class="ancestry-bar-fill" style="width:{pct:.1f}%;background:{colour}"></div>'
+            f"</div></div>"
+        )
+
+    return (
+        '  <div class="ancestry-section">\n'
+        "    <h2>Continental Ancestry Estimate</h2>\n"
+        + "\n".join(bars)
+        + f'\n    <div class="ancestry-meta">'
+        f"Based on {ancestry.markers_found}/{ancestry.markers_total} "
+        f"ancestry-informative markers (1000 Genomes reference frequencies)"
+        f"</div>\n"
+        f"  </div>"
+    )
+
+
 def generate_html(data: ReportData, out_path: str):
     rows_html = []
     for chrom, pos, rsid, gene, geno, mag, repute, geno_sum, snp_sum in tqdm(
@@ -553,6 +683,7 @@ def generate_html(data: ReportData, out_path: str):
         notable_count=f"{data.notable:,}",
         bad_count=f"{data.bad:,}",
         good_count=f"{data.good:,}",
+        ancestry_section=build_ancestry_html(data.ancestry),
         table_rows="\n".join(rows_html),
     )
 
