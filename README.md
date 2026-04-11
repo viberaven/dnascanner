@@ -35,24 +35,26 @@ uv sync
 ### Step 1: Download SNPedia
 
 ```bash
-# Download pre-built database (fast, seconds)
-# Falls back to SNPedia API mirroring if pre-built is unavailable
+# Download pre-built database, or check for a newer version if one exists locally
 uv run download
 
-# Refresh: fetch latest pre-built, then check SNPedia API for updates
+# Fetch missing pages from SNPedia API (keeps existing pages as-is)
+uv run download --update
+
+# Full refresh: fetch latest pre-built, then check all pages for newer versions
 uv run download --refresh
 
-# Skip pre-built, mirror directly from SNPedia API (~3-5 hours)
-uv run download --no-prebuilt
+# Skip pre-built, fetch missing pages directly from SNPedia API
+uv run download --no-prebuilt --update
 
 # Download just one category from the API
-uv run download --no-prebuilt --category snps
+uv run download --update --category snps
 
 # Adjust delay if hitting too many 502s
-uv run download --no-prebuilt --delay 3
+uv run download --update --delay 3
 ```
 
-On first run, `uv run download` tries to fetch a pre-built database from `data.viberaven.com`. This takes seconds instead of hours. If the pre-built is unavailable, it falls back to mirroring from the SNPedia API page by page.
+On first run, `uv run download` tries to fetch a pre-built database from `data.viberaven.com`. This takes seconds instead of hours. If the pre-built is unavailable, it falls back to mirroring from the SNPedia API page by page. Subsequent runs check if a newer pre-built is available (via `Last-Modified` header) and download it if so.
 
 | Flag | Default | Description |
 |------|---------|-------------|
@@ -60,8 +62,9 @@ On first run, `uv run download` tries to fetch a pre-built database from `data.v
 | `--delay` | `1.0` | Seconds between API requests |
 | `--batch` | `50` | Pages per API batch (max 50) |
 | `--category` | `all` | `snps`, `genotypes`, `genosets`, or `all` |
-| `--refresh` | off | Fetch latest pre-built, then check API for updates |
-| `--no-prebuilt` | off | Skip pre-built download, mirror from API only |
+| `--update` | off | Fetch only missing pages from SNPedia API (no version checks) |
+| `--refresh` | off | Fetch latest pre-built, then check all pages for newer versions |
+| `--no-prebuilt` | off | Skip pre-built download, use SNPedia API only |
 
 ### Step 2: Scan your VCF
 
@@ -109,10 +112,15 @@ uv run download                                      # fetches pre-built DB (sec
 uv run scan --vcf /mnt/dna/my_genome.vcf.gz
 uv run report
 
-# Later: update SNPedia and regenerate
-uv run download --refresh                            # fetch latest + check for updates
+# Later: fill in any missing pages
+uv run download --update                             # fetch missing pages only (fast)
 uv run scan --vcf /mnt/dna/my_genome.vcf.gz          # only re-matches if data changed
 uv run report                                        # regenerate report
+
+# Full refresh: update everything to latest versions
+uv run download --refresh                            # fetch pre-built + check all versions
+uv run scan --vcf /mnt/dna/my_genome.vcf.gz
+uv run report
 ```
 
 ## Supported VCF formats

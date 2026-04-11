@@ -657,6 +657,34 @@ def download_category(
 PREBUILT_URL = "https://data.viberaven.com/dnascanner/snpedia.db"
 
 
+def check_prebuilt_newer(db_path: str) -> bool:
+    """Check if the remote pre-built database is newer than the local one."""
+    from email.utils import parsedate_to_datetime
+    from pathlib import Path
+
+    local_path = Path(db_path)
+    if not local_path.exists():
+        return True
+
+    try:
+        resp = session.head(PREBUILT_URL, timeout=15)
+        resp.raise_for_status()
+    except requests.RequestException:
+        return False
+
+    last_modified = resp.headers.get("last-modified")
+    if not last_modified:
+        return False
+
+    try:
+        remote_time = parsedate_to_datetime(last_modified).timestamp()
+    except (ValueError, TypeError):
+        return False
+
+    local_time = local_path.stat().st_mtime
+    return remote_time > local_time
+
+
 def download_prebuilt(db_path: str) -> bool:
     """Try to download a pre-built SNPedia database. Returns True on success."""
     import shutil
@@ -742,9 +770,14 @@ def main():
         help="Which category to download (default: all)",
     )
     parser.add_argument(
+        "--update",
+        action="store_true",
+        help="Fetch only missing pages from SNPedia API (no version checks for existing pages)",
+    )
+    parser.add_argument(
         "--refresh",
         action="store_true",
-        help="Check remote revisions and update existing pages if newer (slower, makes extra API calls)",
+        help="Fetch latest pre-built DB, then check remote revisions and update all pages (slower)",
     )
     parser.add_argument(
         "--no-prebuilt",
@@ -763,31 +796,45 @@ def main():
     print("SNPedia Downloader")
     print(f"  Database: {args.db}")
 
-    # Try pre-built download first
     db_exists = Path(args.db).exists()
-    need_mirror = True
+    need_api = args.update or args.refresh
 
+    # Step 1: Handle pre-built database
     if not args.no_prebuilt:
         if not db_exists:
             # No local DB — try pre-built first
             if download_prebuilt(args.db):
-                need_mirror = False
+                db_exists = True
+            else:
+                # Pre-built failed — fall back to API mirror
+                need_api = True
         elif args.refresh:
-            # Refresh mode — fetch latest pre-built, then refresh from API
+            # Refresh mode — fetch latest pre-built before API refresh
             download_prebuilt(args.db)
-            # Still need to mirror for refresh
-            need_mirror = True
+        else:
+            # Check if remote pre-built is newer than local
+            print("  Checking for newer pre-built database...")
+            if check_prebuilt_newer(args.db):
+                print("  Newer pre-built database available.")
+                download_prebuilt(args.db)
+            else:
+                print("  Local database is up to date.")
 
-    if not need_mirror and not args.refresh:
-        # Pre-built download succeeded, no refresh needed
-        conn = sqlite3.connect(args.db)
-        for table in ["snps", "genotypes", "genosets"]:
-            count = conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
-            print(f"  {table}: {count:,} rows")
-        conn.close()
+    # Step 2: If no API work needed, just report stats and exit
+    if not need_api:
+        if db_exists:
+            conn = sqlite3.connect(args.db)
+            for table in ["snps", "genotypes", "genosets"]:
+                count = conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+                print(f"  {table}: {count:,} rows")
+            conn.close()
+        else:
+            print(
+                "  No database found. Use --update or --refresh to download from SNPedia API."
+            )
         return
 
-    # Mirror from SNPedia API
+    # Step 3: Mirror from SNPedia API
     print(f"  Delay: {args.delay}s between requests")
     print(f"  Batch size: {batch_size}")
     print(f"  API: {API_URL}")
@@ -805,7 +852,7 @@ def main():
 
     for category, table in categories_to_run:
         stats = download_category(
-            conn, category, table, batch_size, args.delay, args.refresh
+            conn, category, table, batch_size, args.delay, refresh=args.refresh
         )
         for k in total_stats:
             total_stats[k] += stats[k]
